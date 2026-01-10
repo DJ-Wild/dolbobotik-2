@@ -5,24 +5,26 @@ import yt_dlp
 import os
 import threading
 import time
+from html import escape
 
 # === НАСТРОЙКИ ===
-TELEGRAM_TOKEN = '8419344748:AAGj23nEdS4b48rvjJleK8lhDR0Bc5dHTLQ'  # ← ОБЯЗАТЕЛЬНО новый!
-SOUNDCLOUD_CLIENT_ID = 'knW1rrkzZq7EKRs3wY0k0hqDxv1AqnTs'
+TELEGRAM_TOKEN = '8419344748:AAGj23nEdS4b48rvjJleK8lhDR0Bc5dHTLQ'  # ← ОБЯЗАТЕЛЬНО замени на новый токен!
+SOUNDCLOUD_CLIENT_ID = 'knW1rrkzZq7EKRs3wY0k0hqDxv1AqnTs'  # ← Твой client_id
 DOWNLOAD_DIR = 'downloads'
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-
-# Хранилище последних результатов по chat_id
-user_search_results = {}
+user_search_results = {}  # {chat_id: [track1, track2, ...]}
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "Привет! Напиши .song название — найду на SoundCloud.\nПосле получения списка напиши цифру (1-10), чтобы скачать трек.")
-
-from html import escape
+    bot.reply_to(
+        message,
+        "Привет! 🎧\nНапиши <code>.song название</code> — найду на SoundCloud.\n"
+        "После получения списка напиши цифру (1–10), чтобы скачать трек.",
+        parse_mode='HTML'
+    )
 
 @bot.message_handler(func=lambda msg: msg.text and msg.text.startswith('.song '))
 def search_soundcloud(message):
@@ -35,7 +37,7 @@ def search_soundcloud(message):
 
         encoded_query = urllib.parse.quote(query)
         url = f"https://api-v2.soundcloud.com/search/tracks?q={encoded_query}&limit=10&client_id={SOUNDCLOUD_CLIENT_ID}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -44,7 +46,6 @@ def search_soundcloud(message):
         if not tracks:
             return bot.send_message(message.chat.id, "Ничего не найдено 😢")
 
-        # Сохраняем результаты для этого чата
         user_search_results[message.chat.id] = tracks[:10]
 
         result_text = f"Результаты по запросу: <b>{escape(query)}</b>\n\n"
@@ -52,13 +53,12 @@ def search_soundcloud(message):
             title = track.get('title', '—')
             artist = track.get('user', {}).get('username', '—')
             track_url = track.get('permalink_url', '')
-            
             if track_url:
                 result_text += f'{i}. <a href="{track_url}">{escape(artist)} – {escape(title)}</a>\n'
             else:
                 result_text += f'{i}. {escape(artist)} – {escape(title)}\n'
 
-        result_text += "\nНапиши номер трека (1-10), чтобы скачать его."
+        result_text += "\nНапиши номер трека (1–10), чтобы скачать его."
         bot.send_message(
             message.chat.id,
             result_text,
@@ -69,7 +69,7 @@ def search_soundcloud(message):
     except Exception as e:
         print(f"❌ Поиск: {e}")
         bot.send_message(message.chat.id, "Ошибка поиска. Попробуй позже.")
-# Обработчик цифр 1-10
+
 @bot.message_handler(func=lambda msg: msg.text and msg.text.isdigit())
 def handle_track_number(message):
     chat_id = message.chat.id
@@ -90,8 +90,6 @@ def handle_track_number(message):
         return bot.reply_to(message, "Не удалось получить ссылку на трек.")
 
     bot.send_message(chat_id, "⬇️ Скачиваю трек... Это может занять 10–30 секунд.")
-
-    # Запускаем скачивание в отдельном потоке, чтобы не блокировать бота
     thread = threading.Thread(target=download_and_send, args=(track_url, chat_id, track))
     thread.start()
 
@@ -99,69 +97,59 @@ def download_and_send(track_url, chat_id, track):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Генерируем уникальное имя файла
             track_id = track.get('id', hash(track_url))
             temp_path = os.path.join(DOWNLOAD_DIR, f"{track_id}")
 
             ydl_opts = {
-                'format': 'bestaudio[ext=mp3]/bestaudio/best',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '128',
-                }],
+                'format': 'bestaudio[ext=opus]/bestaudio[ext=m4a]/bestaudio',
                 'outtmpl': temp_path + '.%(ext)s',
-                'quiet': False,  # ← Временно для отладки
+                'quiet': True,
                 'nocheckcertificate': True,
                 'retries': 5,
                 'fragment_retries': 5,
                 'skip_unavailable_fragments': True,
                 'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Connection': 'keep-alive',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 },
                 'extractor_args': {
                     'soundcloud': {
                         'client_id': [SOUNDCLOUD_CLIENT_ID]
                     }
-                }
+                },
+                'postprocessors': []
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(track_url, download=True)
-                mp3_file = temp_path + '.mp3'
+                ydl.extract_info(track_url, download=True)
 
-            if not os.path.exists(mp3_file):
-                raise FileNotFoundError("MP3 файл не создан")
+            audio_file = None
+            for ext in ['opus', 'm4a', 'webm', 'mp3', 'ogg']:
+                f = temp_path + '.' + ext
+                if os.path.exists(f):
+                    audio_file = f
+                    break
 
-            title = track.get('title', 'Трек')
-            artist = track.get('user', {}).get('username', 'Неизвестен')
+            if not audio_file:
+                raise FileNotFoundError("Аудиофайл не создан")
 
-            with open(mp3_file, 'rb') as audio:
-                bot.send_audio(
-                    chat_id,
-                    audio,
-                    title=title[:30],        # Telegram ограничивает длину
-                    performer=artist[:30],
-                    timeout=120
-                )
+            title = track.get('title', 'Трек')[:30]
+            artist = track.get('user', {}).get('username', 'Неизвестен')[:30]
 
-            os.remove(mp3_file)
-            return  # Успех — выходим
+            with open(audio_file, 'rb') as f:
+                bot.send_audio(chat_id, f, title=title, performer=artist, timeout=120)
+
+            os.remove(audio_file)
+            return
 
         except Exception as e:
-            print(f"❌ Попытка {attempt + 1}/{max_retries} не удалась: {e}")
+            print(f"❌ Попытка {attempt + 1}: {e}")
             if attempt == max_retries - 1:
-                bot.send_message(chat_id, "Не удалось скачать трек. SoundCloud может блокировать запросы из вашего региона.")
+                bot.send_message(chat_id, "Не удалось скачать трек. Возможно, он недоступен.")
             else:
-                time.sleep(3)  # Пауза перед повтором
+                time.sleep(3)
 
-    # Удаляем временные файлы, если остались
-    for ext in ['.webm', '.m4a', '.mp3', '.opus']:
-        f = temp_path + ext
+    for ext in ['opus', 'm4a', 'webm', 'mp3', 'ogg']:
+        f = temp_path + '.' + ext
         if os.path.exists(f):
             os.remove(f)
 
