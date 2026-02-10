@@ -5,11 +5,13 @@ import os
 import json
 import re
 import threading
-from dotenv import load_dotenv
+from dotenv import load_dotenv # Replit использует свою систему, но оставим для локальных тестов
 from telebot import types
+from flask import Flask # Добавляем Flask для веб-сервера
 
 # --- 1. НАСТРОЙКИ И ИНИЦИАЛИЗАЦИЯ ---
-load_dotenv()
+# В Replit эти переменные будут браться из Secrets, а не из .env
+load_dotenv() 
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 BRAWLSTARS_API_KEY = os.getenv('BRAWLSTARS_API_KEY')
@@ -225,11 +227,34 @@ def hourly_tracker():
         save_tracked_players(tracked_players)
         print("Проверка завершена.")
 
+# === НОВЫЙ БЛОК ДЛЯ 24/7 РАБОТЫ НА REPLIT ===
+app = Flask(__name__)
 
-# --- 6. ЗАПУСК ---
-if __name__ == '__main__':
+@app.route('/')
+def home():
+    # Эта веб-страница нужна, чтобы UptimeRobot мог "будить" бота
+    return "Bot is alive and running!"
+
+def run_web_server():
+    # Запускаем веб-сервер на порту 8080
+    app.run(host='0.0.0.0', port=8080)
+
+def run_bot():
+    """Запускает бота и фоновое отслеживание"""
+    print("🚀 Фоновое отслеживание кубков запущено.")
     tracker_thread = threading.Thread(target=hourly_tracker, daemon=True)
     tracker_thread.start()
 
-    print("✅ Основной бот и фоновый трекер запущены!")
+    print("✅ Основной бот запущен!")
     bot.infinity_polling(timeout=20)
+# === КОНЕЦ НОВОГО БЛОКА ===
+
+
+if __name__ == '__main__':
+    # Запускаем веб-сервер в отдельном потоке, чтобы он не мешал боту
+    web_server_thread = threading.Thread(target=run_web_server)
+    web_server_thread.start()
+    
+    # Запускаем бота в основном потоке
+    run_bot() 
+
